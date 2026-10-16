@@ -3,7 +3,7 @@ export const errorHandler = (err, req, res, next) => {
     if (!err.isOperational) {
         console.log("Error: ", err);
     }
-
+// console.log("Inside error hanlder middleware!");
     const statusCode = err.statusCode || 500;
 
     res.status(statusCode).json({
