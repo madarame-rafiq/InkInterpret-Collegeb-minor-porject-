@@ -1,4 +1,4 @@
-export const errorHandler = (err, res, res, next) => {
+export const errorHandler = (err, req, res, next) => {
     // Log only the error that are not operational that is some error or bug in the application.
     if (!err.isOperational) {
         console.log("Error: ", err);

@@ -1,6 +1,7 @@
 import express from "express";
 import { pool } from "./database/pool.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
+import authRoutes from "./routes/authRoutes.js"
 
 const app = express();
 const PORT = 5001;
@@ -32,6 +33,9 @@ app.get('/api/health/database', async (req, res) => {
         });
     }
 });
+
+//Authentication routes.
+app.use('/api/auth', authRoutes);
 
 app.listen(PORT, () => {
     console.log(`The server is listening at port: ${PORT}`);

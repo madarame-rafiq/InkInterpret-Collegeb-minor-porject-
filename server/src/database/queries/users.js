@@ -12,6 +12,7 @@ export const findUserByUsername = async (username) => {
 }
 
 export const createUser = async ({ username, passwordHash }) => {
+    // console.log("****Inside register query username and password****", username, passwordHash);
     const result = await pool.query(`
             INSERT INTO users (username, password_hash)
             VALUES ($1, $2)
