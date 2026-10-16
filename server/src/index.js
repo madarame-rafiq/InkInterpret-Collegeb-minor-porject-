@@ -1,11 +1,14 @@
 import express from "express";
 import { pool } from "./database/pool.js";
+import { errorHandler } from "./middlewares/errorHandler.js";
 
 const app = express();
 const PORT = 5001;
 
 
 app.use(express.json());
+//error handler middleware.
+app.use(errorHandler);
 
 app.get('/api/health', (req, res) => {
     res.status(200).json({
