@@ -78,3 +78,23 @@ export const getMe = async (req, res, next) => {
         next(error)
     }
 }
+
+export function logout(req, res, next) {
+  req.session.destroy((error) => {
+    if (error) {
+      return next(error);
+    }
+
+    res.clearCookie("inkinterpret.sid", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+    });
+
+    return res.status(200).json({
+      status: "success",
+      message: "Logged out successfully",
+    });
+  });
+}
