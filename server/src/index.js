@@ -2,12 +2,14 @@ import express from "express";
 import { pool } from "./database/pool.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import authRoutes from "./routes/authRoutes.js"
+import { sessionMiddleware } from "./config/session.js";
 
 const app = express();
 const PORT = 5001;
 
 
 app.use(express.json());
+app.use(sessionMiddleware);
 //error handler middleware.
 app.use(errorHandler);
 

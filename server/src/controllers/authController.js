@@ -1,4 +1,6 @@
+import { findUserById } from "../database/queries/users.js";
 import { loginUser, registerUser } from "../services/authService.js";
+import { AppError } from "../utils/AppError.js";
 import { loginSchema, registerSchema } from "../validators/authSchema.js"
 
 
@@ -55,5 +57,24 @@ export const login = async (req, res, next) => {
         });
     } catch (error) {
         next(error);
+    }
+}
+
+export const getMe = async (req, res, next) => {
+    try {
+        const user = await findUserById(req.session?.userId);
+
+        if (!user) {
+            req.session.destroy(() => {});
+            return next(
+                new AppError(401, 'Authentication required', "UNAUTHORIZED")
+            );
+        }
+        res.status(200).json({
+            status: "success",
+            data: { user }
+        });
+    } catch (error) {
+        next(error)
     }
 }
