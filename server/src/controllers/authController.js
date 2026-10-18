@@ -41,9 +41,17 @@ export const login = async (req, res, next) => {
 
         const user = await loginUser(validation.data);
 
-        res.status(200).json({
+        req.session.userId = user.id;
+
+        req.session.save((error) => {
+        if (error) {
+            return next(error);
+        }
+
+        return res.status(200).json({
             status: "success",
             data: { user },
+        });
         });
     } catch (error) {
         next(error);
