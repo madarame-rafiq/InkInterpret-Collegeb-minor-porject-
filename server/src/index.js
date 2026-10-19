@@ -2,6 +2,7 @@ import express from "express";
 import { pool } from "./database/pool.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import authRoutes from "./routes/authRoutes.js"
+import roomRoutes from "./routes/roomRoutes.js"
 import { sessionMiddleware } from "./config/session.js";
 
 const app = express();
@@ -38,6 +39,7 @@ app.get('/api/health/database', async (req, res) => {
 
 //Authentication routes.
 app.use('/api/auth', authRoutes);
+app.use('/api/rooms', roomRoutes);
 
 app.listen(PORT, () => {
     console.log(`The server is listening at port: ${PORT}`);
