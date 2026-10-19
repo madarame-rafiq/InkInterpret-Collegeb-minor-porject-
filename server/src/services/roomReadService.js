@@ -63,3 +63,43 @@ export async function getRoomForMember({ userId, code }) {
 
   return result.rows[0];
 }
+
+
+
+export async function listRoomMembers({ userId, code }) {
+  const accessResult = await pool.query(
+    `SELECT r.id
+     FROM rooms AS r
+     JOIN room_members AS requester
+       ON requester.room_id = r.id
+     WHERE r.code = $1
+       AND requester.user_id = $2`,
+    [code, userId],
+  );
+
+  if (accessResult.rowCount === 0) {
+    throw new AppError(
+      404,
+      "Room not found or you are not a member",
+      "ROOM_NOT_FOUND",
+    );
+  }
+
+  const result = await pool.query(
+    `SELECT
+       u.id AS user_id,
+       u.username,
+       rm.role,
+       rm.joined_at
+     FROM room_members AS rm
+     JOIN users AS u ON u.id = rm.user_id
+     WHERE rm.room_id = $1
+     ORDER BY
+       CASE WHEN rm.role = 'host' THEN 0 ELSE 1 END,
+       rm.joined_at ASC,
+       rm.id ASC`,
+    [accessResult.rows[0].id],
+  );
+
+  return result.rows;
+}
