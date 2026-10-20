@@ -6,7 +6,7 @@ export default function SiteFooter() {
     <footer className="border-t border-ink/15">
       <div className="mx-auto flex max-w-6xl flex-col gap-8 px-5 py-10 sm:px-8 md:flex-row md:items-end md:justify-between">
         <div>
-          <Logo />
+          <Logo href="#top" />
           <p className="mt-3 max-w-sm text-sm text-ink-soft">
             A multiplayer drawing and interpretation game. A college minor
             project, currently in development.

@@ -1,8 +1,15 @@
 import { ArrowDown, ArrowRight } from 'lucide-react'
 import Button from '../../components/ui/Button.jsx'
+import { useAuth } from '../../context/authContext.js'
 import GameplayPreview from './GameplayPreview.jsx'
 
 export default function Hero() {
+  const { user, isLoading } = useAuth()
+
+  // While the first /me check is pending, the account-dependent button and
+  // note keep their space but are invisible, so the guest version never flashes.
+  const pendingClass = isLoading ? 'invisible' : ''
+
   return (
     <section
       aria-labelledby="hero-heading"
@@ -50,19 +57,27 @@ export default function Hero() {
         </p>
 
         <div className="mt-8 flex flex-wrap items-center gap-4">
-          <Button href="#build-status">
-            Get started
-            <ArrowRight className="size-5" aria-hidden="true" />
-          </Button>
+          {user ? (
+            <Button to="/dashboard" className={pendingClass}>
+              Go to dashboard
+              <ArrowRight className="size-5" aria-hidden="true" />
+            </Button>
+          ) : (
+            <Button to="/register" className={pendingClass}>
+              Get started
+              <ArrowRight className="size-5" aria-hidden="true" />
+            </Button>
+          )}
           <Button href="#how-it-works" variant="secondary">
             How it works
             <ArrowDown className="size-5" aria-hidden="true" />
           </Button>
         </div>
 
-        <p className="mt-4 text-sm text-ink-faint">
-          Sign-up and rooms arrive in the next build. For now, this page is the
-          tour.
+        <p className={`mt-4 text-sm text-ink-faint ${pendingClass}`}>
+          {user
+            ? `Signed in as ${user.username}. Rooms and gameplay are still being built.`
+            : 'Accounts are open. Rooms and gameplay are still being built.'}
         </p>
 
         <ul className="mt-12 flex max-w-md flex-wrap gap-y-2 border-t border-ink/20 pt-5 text-sm font-semibold text-ink-soft">

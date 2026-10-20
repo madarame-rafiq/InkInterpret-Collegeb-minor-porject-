@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Menu, X } from 'lucide-react'
 import Logo from '../brand/Logo.jsx'
 import Button from '../ui/Button.jsx'
+import { useAuth } from '../../context/authContext.js'
 import { NAV_LINKS } from './navLinks.js'
 
 export default function SiteHeader() {
+  const { user, isLoading } = useAuth()
   const [open, setOpen] = useState(false)
   const toggleRef = useRef(null)
 
@@ -26,7 +29,7 @@ export default function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-ink/15 bg-paper">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3 sm:px-8">
-        <Logo />
+        <Logo href="#top" />
 
         <nav aria-label="Primary" className="hidden items-center gap-8 md:flex">
           {NAV_LINKS.map((link) => (
@@ -38,9 +41,30 @@ export default function SiteHeader() {
               {link.label}
             </a>
           ))}
-          <Button href="#build-status" size="sm">
-            Get started
-          </Button>
+
+          {/* While the first /me check is pending, the account actions take up
+              their space but are invisible, so nothing flashes or shifts. */}
+          <div
+            className={`flex items-center gap-8 ${isLoading ? 'invisible' : ''}`}
+          >
+            {user ? (
+              <Button to="/dashboard" size="sm">
+                Dashboard
+              </Button>
+            ) : (
+              <>
+                <Link
+                  to="/login"
+                  className="rounded-control text-sm font-semibold underline-offset-4 hover:underline"
+                >
+                  Log in
+                </Link>
+                <Button to="/register" size="sm">
+                  Get started
+                </Button>
+              </>
+            )}
+          </div>
         </nav>
 
         <button
@@ -78,11 +102,33 @@ export default function SiteHeader() {
               </a>
             </li>
           ))}
-          <li className="py-4">
-            <Button href="#build-status" onClick={close} className="w-full">
-              Get started
-            </Button>
-          </li>
+
+          {/* Account items appear only once the session check has settled. */}
+          {!isLoading &&
+            (user ? (
+              <li className="py-4">
+                <Button to="/dashboard" onClick={close} className="w-full">
+                  Dashboard
+                </Button>
+              </li>
+            ) : (
+              <>
+                <li className="border-b border-ink/10">
+                  <Link
+                    to="/login"
+                    onClick={close}
+                    className="block py-3 font-display text-xl"
+                  >
+                    Log in
+                  </Link>
+                </li>
+                <li className="py-4">
+                  <Button to="/register" onClick={close} className="w-full">
+                    Get started
+                  </Button>
+                </li>
+              </>
+            ))}
         </ul>
       </nav>
     </header>

@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom'
+
 const base =
   'inline-flex items-center justify-center gap-2 rounded-control border-2 border-ink font-semibold ' +
   'transition-[transform,box-shadow,background-color,color] duration-150 ' +
@@ -18,8 +20,11 @@ const sizes = {
   md: 'px-5 py-3 text-base',
 }
 
-// Renders an <a> when given href, otherwise a <button>.
+// to   -> router <Link> (internal pages)
+// href -> plain <a> (in-page anchors like #how-it-works)
+// neither -> <button> (pass type="submit" for forms)
 export default function Button({
+  to,
   href,
   variant = 'primary',
   size = 'md',
@@ -28,6 +33,14 @@ export default function Button({
   ...props
 }) {
   const classes = `${base} ${variants[variant]} ${sizes[size]} ${className}`
+
+  if (to) {
+    return (
+      <Link to={to} className={classes} {...props}>
+        {children}
+      </Link>
+    )
+  }
 
   if (href) {
     return (

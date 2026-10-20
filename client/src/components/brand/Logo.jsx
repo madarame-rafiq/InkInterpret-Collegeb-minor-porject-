@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom'
+
 // The mark is a lowercase "i": a brush-stroke stem, a vermilion ink drop for
 // the dot, and a loose underline. It reads as "ink" and as "interpret".
 export function BrandMark({ className = 'size-9' }) {
@@ -38,15 +40,28 @@ export function Wordmark({ className = '' }) {
   )
 }
 
-export default function Logo({ href = '#top' }) {
-  return (
-    <a
-      href={href}
-      aria-label="InkInterpret, back to top"
-      className="inline-flex items-center gap-2 rounded-control"
-    >
+// href -> in-page anchor (the welcome page's own "#top")
+// otherwise -> router link to the welcome page
+export default function Logo({ href }) {
+  const className = 'inline-flex items-center gap-2 rounded-control'
+  const content = (
+    <>
       <BrandMark />
       <Wordmark />
-    </a>
+    </>
+  )
+
+  if (href) {
+    return (
+      <a href={href} aria-label="InkInterpret, back to top" className={className}>
+        {content}
+      </a>
+    )
+  }
+
+  return (
+    <Link to="/" aria-label="InkInterpret, home" className={className}>
+      {content}
+    </Link>
   )
 }

@@ -12,7 +12,6 @@ const PORT = 5001;
 app.use(express.json());
 app.use(sessionMiddleware);
 //error handler middleware.
-app.use(errorHandler);
 
 app.get('/api/health', (req, res) => {
     res.status(200).json({
@@ -40,6 +39,9 @@ app.get('/api/health/database', async (req, res) => {
 //Authentication routes.
 app.use('/api/auth', authRoutes);
 app.use('/api/rooms', roomRoutes);
+
+app.use(errorHandler);
+
 
 app.listen(PORT, () => {
     console.log(`The server is listening at port: ${PORT}`);
