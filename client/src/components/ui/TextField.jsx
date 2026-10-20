@@ -6,6 +6,7 @@ export default function TextField({
   hint,
   error,
   className = '',
+  inputClassName = '',
   ...inputProps
 }) {
   const hintId = `${id}-hint`
@@ -24,7 +25,7 @@ export default function TextField({
         aria-describedby={describedBy || undefined}
         className={`mt-2 block w-full rounded-control border-2 bg-sheet px-3 py-3 text-base ${
           error ? 'border-vermilion-deep' : 'border-ink'
-        }`}
+        } ${inputClassName}`}
         {...inputProps}
       />
       {hint && (
