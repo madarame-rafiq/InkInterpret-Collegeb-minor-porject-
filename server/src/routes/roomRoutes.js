@@ -8,6 +8,8 @@ import { leaveRoomController } from "../controllers/leaveRoomController.js";
 
 const router = Router();
 
+router.use(authRequire);
+
 router.post("/", authRequire, createRoomController);
 router.post("/join", authRequire, joinRoomController);
 router.get("/", listRoomsController);

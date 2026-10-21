@@ -7,6 +7,7 @@ import Button from '../../components/ui/Button.jsx'
 import CreateRoomForm from './CreateRoomForm.jsx'
 import JoinRoomForm from './JoinRoomForm.jsx'
 import RoomList from './RoomList.jsx'
+import DashboardBackground from './DashboardBackground.jsx'
 import { createRoom, joinRoom, listRooms } from './roomsApi.js'
 import { describeError, joinErrorMessage } from './roomRules.js'
 
@@ -132,6 +133,15 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-dvh overflow-x-clip">
+      {/* Full-screen animated sketch background — fixed behind everything,
+          never participates in layout, fully aria-hidden inside. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 -z-10 overflow-hidden"
+      >
+        <DashboardBackground />
+      </div>
+
       <header className="border-b border-ink/15">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3 sm:px-8">
           <Logo />
@@ -170,8 +180,8 @@ export default function DashboardPage() {
             Your drawing rooms
           </h1>
           <p className="mt-3 leading-relaxed text-ink-soft">
-            Create a room and share its code, or join a friend’s with theirs. Every room
-            you’re part of is listed here.
+            Create a room and share its code, or join a friend's with theirs. Every room
+            you're part of is listed here.
           </p>
 
           {/* On small screens the forms sit below the list, so offer shortcuts to them */}

@@ -4,11 +4,7 @@ import { useAuth } from '../../context/authContext.js'
 import GameplayPreview from './GameplayPreview.jsx'
 
 export default function Hero() {
-  const { user, isLoading } = useAuth()
-
-  // While the first /me check is pending, the account-dependent button and
-  // note keep their space but are invisible, so the guest version never flashes.
-  const pendingClass = isLoading ? 'invisible' : ''
+  const { user } = useAuth()
 
   return (
     <section
@@ -58,12 +54,12 @@ export default function Hero() {
 
         <div className="mt-8 flex flex-wrap items-center gap-4">
           {user ? (
-            <Button to="/dashboard" className={pendingClass}>
+            <Button to="/dashboard">
               Go to dashboard
               <ArrowRight className="size-5" aria-hidden="true" />
             </Button>
           ) : (
-            <Button to="/register" className={pendingClass}>
+            <Button to="/register">
               Get started
               <ArrowRight className="size-5" aria-hidden="true" />
             </Button>
@@ -74,7 +70,7 @@ export default function Hero() {
           </Button>
         </div>
 
-        <p className={`mt-4 text-sm text-ink-faint ${pendingClass}`}>
+        <p className="mt-4 text-sm text-ink-faint">
           {user
             ? `Signed in as ${user.username}. Rooms and gameplay are still being built.`
             : 'Accounts are open. Rooms and gameplay are still being built.'}
