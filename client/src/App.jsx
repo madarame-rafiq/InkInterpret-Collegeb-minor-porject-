@@ -3,6 +3,7 @@ import WelcomePage from './features/welcome/WelcomePage.jsx'
 import LoginPage from './features/auth/LoginPage.jsx'
 import RegisterPage from './features/auth/RegisterPage.jsx'
 import DashboardPage from './features/dashboard/DashboardPage.jsx'
+import RoomPage from './features/room/RoomPage.jsx'
 import ProtectedRoute from './routes/ProtectedRoute.jsx'
 import GuestRoute from './routes/GuestRoute.jsx'
 
@@ -20,6 +21,7 @@ export default function App() {
       {/* Only for signed-in users */}
       <Route element={<ProtectedRoute />}>
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/rooms/:code" element={<RoomPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

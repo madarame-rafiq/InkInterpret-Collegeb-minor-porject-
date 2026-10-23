@@ -65,7 +65,7 @@ export async function leaveRoom({ userId, code }) {
       await client.query("DELETE FROM rooms WHERE id = $1", [room.id]);
       await client.query("COMMIT");
 
-      return { deleted: true, code };
+      return { deleted: true, code, roomId: room.id };
     }
 
     if (wasHost) {
@@ -91,7 +91,7 @@ export async function leaveRoom({ userId, code }) {
 
     await client.query("COMMIT");
 
-    return { deleted: false, code };
+    return { deleted: false, code, roomId: room.id };
   } catch (error) {
     try {
       await client.query("ROLLBACK");

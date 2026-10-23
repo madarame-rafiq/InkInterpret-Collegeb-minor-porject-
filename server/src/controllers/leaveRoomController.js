@@ -1,4 +1,5 @@
 import { leaveRoom } from "../services/leaveRoomService.js";
+import { revokeUserFromRoom } from "../socket/index.js";
 
 export async function leaveRoomController(req, res, next) {
   const code = req.params.code.trim().toUpperCase();
@@ -12,10 +13,26 @@ export async function leaveRoomController(req, res, next) {
   }
 
   try {
-    const result = await leaveRoom({
-      userId: req.session.userId,
-      code,
-    });
+    const userId = req.session.userId;
+
+    const result = await leaveRoom({ userId, code });
+
+    // The DB transaction has committed. Only now do we revoke live access.
+    // Failures here must not fail the HTTP response — the leave is already
+    // persisted and cannot be rolled back.
+    if (result.roomId) {
+      try {
+        const io = req.app.get("io");
+        await revokeUserFromRoom(io, result.roomId, userId, {
+          roomDeleted: result.deleted,
+        });
+      } catch (revokeError) {
+        console.error(
+          "Failed to revoke socket access after successful leave:",
+          revokeError
+        );
+      }
+    }
 
     return res.status(200).json({
       status: "success",

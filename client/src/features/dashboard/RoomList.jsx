@@ -1,5 +1,9 @@
+import { Link } from 'react-router-dom'
 import Button from '../../components/ui/Button.jsx'
 import RoomCard from './RoomCard.jsx'
+
+// Rooms in these statuses have an active lobby/game page.
+const LIVE_STATUSES = ['waiting', 'in_progress']
 
 function RoomListSkeleton() {
   return (
@@ -99,19 +103,23 @@ export default function RoomList({ rooms, status, error, onRetry }) {
       {rooms.length === 0 && status === 'ready' && <EmptyState />}
 
       {rooms.length > 0 && (
-        <>
-          <p className="text-sm text-ink-faint">
-            Room lobbies arrive in the next build. For now, share a room’s code so others can
-            join.
-          </p>
-          <ul className="space-y-4">
-            {rooms.map((room) => (
-              <li key={room.id}>
+        <ul className="space-y-4">
+          {rooms.map((room) => (
+            <li key={room.id}>
+              {LIVE_STATUSES.includes(room.status) ? (
+                <Link
+                  to={`/rooms/${room.code}`}
+                  className="block rounded-control"
+                  aria-label={`Open room ${room.code}`}
+                >
+                  <RoomCard room={room} />
+                </Link>
+              ) : (
                 <RoomCard room={room} />
-              </li>
-            ))}
-          </ul>
-        </>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   )
