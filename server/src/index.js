@@ -8,6 +8,7 @@ import authRoutes from "./routes/authRoutes.js";
 import roomRoutes from "./routes/roomRoutes.js";
 import { sessionMiddleware } from "./config/session.js";
 import { createSocketServer } from "./socket/index.js";
+import { createGameTimer } from "./services/gameTimerService.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -25,6 +26,7 @@ const allowedOrigins = (
 // and registered socket event handlers.
 const io = createSocketServer(httpServer, allowedOrigins);
 app.set("io", io);
+const gameTimer = createGameTimer(io);
 
 // Express middleware
 app.use(express.json());
@@ -67,3 +69,10 @@ app.use(errorHandler);
 httpServer.listen(PORT, () => {
   console.log(`The InkInterpret server is listening on port ${PORT}`);
 });
+
+const shutdown = () => {
+  gameTimer.stop();
+  httpServer.close(() => pool.end());
+};
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);

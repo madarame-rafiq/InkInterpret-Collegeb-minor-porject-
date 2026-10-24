@@ -1,27 +1,33 @@
 // RoomPage: the top-level page for /rooms/:code.
 //
-// Architecture:
-//   RoomPage
-//   ├── useRoomData          – HTTP fetch of room + members
-//   ├── useRoomSocket        – socket join + access_revoked handler
-//   ├── RoomLayout (shell)   – header, two-column grid, persistent ChatPanel
-//   │   ├── main content area → phase-specific view (LobbyView now)
-//   │   └── ChatPanel
-//   └── handles loading / error / not-found / access-revoked states
+//   RoomPage (keyed by code, so switching rooms resets all state)
+//   └── RoomSession
+//       ├── useRoomData   – room + members over HTTP, kept current by refresh()
+//       ├── useRoomSocket – joins the room channel, handles access revocation
+//       ├── useChat       – ONE chat state for the whole room
+//       ├── useGameState  – authoritative game snapshot (HTTP + notifications)
+//       └── RoomLayout    – header + main area + persistent ChatPanel
+//           └── main      – lobby | game phase | loading | error
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../../context/authContext.js'
+import { getErrorMessage } from '../../lib/api.js'
 import { useRoomData } from './useRoomData.js'
 import { useRoomSocket } from './useRoomSocket.js'
+import { useChat } from './useChat.js'
+import { useGameState } from './useGameState.js'
 import { leaveRoom } from './roomApi.js'
+import { startGame } from './gameApi.js'
+import RoomLayout from './RoomLayout.jsx'
 import LobbyView from './LobbyView.jsx'
-import ChatPanel from './ChatPanel.jsx'
+import GamePhaseView from './GamePhaseView.jsx'
 import Button from '../../components/ui/Button.jsx'
-import Logo from '../../components/brand/Logo.jsx'
-import CopyCodeButton from '../dashboard/CopyCodeButton.jsx'
 import PageLoader from '../../components/ui/PageLoader.jsx'
-import { MessageSquare } from 'lucide-react'
+
+// The lobby has no server event for membership changes, so while it is on
+// screen the member list is refreshed at a modest interval (and on focus).
+const LOBBY_REFRESH_MS = 8000
 
 // ── Access-revoked overlay ────────────────────────────────────────────────────
 function AccessRevokedBanner({ payload, onBackToDashboard }) {
@@ -113,43 +119,153 @@ function RoomError({ status, error, onRetry }) {
   )
 }
 
-// ── Main RoomPage ──────────────────────────────────────────────────────────────
-export default function RoomPage() {
-  const { code } = useParams()
+// A boxed message for the main area while the game state is loading or failed.
+function MainNotice({ title, message, onRetry }) {
+  return (
+    <div
+      role={onRetry ? 'alert' : 'status'}
+      className="border-2 border-l-[6px] border-ink border-l-vermilion bg-sheet px-5 py-4"
+    >
+      <p
+        className={`font-display text-xl font-medium ${onRetry ? '' : 'motion-safe:animate-pulse'}`}
+      >
+        {title}
+      </p>
+      {message && <p className="mt-2 text-sm text-ink-soft">{message}</p>}
+      {onRetry && (
+        <Button size="sm" variant="secondary" className="mt-3" onClick={onRetry}>
+          Try again
+        </Button>
+      )}
+    </div>
+  )
+}
+
+function RoomSession({ code }) {
+  const roomCode = code.toUpperCase()
   const navigate = useNavigate()
   const { user } = useAuth()
 
-  // HTTP data
-  const { room, members, status, error, refresh, retry } = useRoomData(code)
+  // ── Data and realtime ────────────────────────────────────────────────────
+  const { room, members, status, error, refresh: refreshRoom, retry } = useRoomData(roomCode)
 
-  // Access revocation state
   const [revokedPayload, setRevokedPayload] = useState(null)
-
   const handleAccessRevoked = useCallback((payload) => {
     setRevokedPayload(payload)
   }, [])
 
-  // Socket lifecycle
   const { socketStatus, socketError } = useRoomSocket({
-    code: code?.toUpperCase(),
+    code: roomCode,
     onAccessRevoked: handleAccessRevoked,
   })
 
-  // Mobile chat panel toggle
-  const [chatOpen, setChatOpen] = useState(false)
+  // One chat state for the entire room, whatever is in the main area.
+  const chat = useChat({ code: roomCode, socketStatus })
+
+  const {
+    game,
+    status: gameStatus,
+    error: gameError,
+    notice,
+    abortReason,
+    sync: syncGame,
+    retry: retryGame,
+  } = useGameState({ code: roomCode, socketStatus })
+
+  // ── What to show in the main area ────────────────────────────────────────
+  // A finished or aborted game stays "latest" on the server, so the player
+  // chooses to leave its summary. That choice is local UI state only.
+  const [dismissedGameId, setDismissedGameId] = useState(null)
+  const gameIsOver = Boolean(game) && game.status !== 'active'
+  const showLobby = !game || (gameIsOver && game.id === dismissedGameId)
+
+  // ── Keeping room data current ────────────────────────────────────────────
+  // Rejoined the channel (initial join or reconnect): re-read members.
+  useEffect(() => {
+    if (socketStatus === 'joined') {
+      refreshRoom()
+    }
+  }, [socketStatus, refreshRoom])
+
+  // Returning to the tab: re-read both members and the game.
+  useEffect(() => {
+    function onReturn() {
+      if (document.visibilityState === 'visible') {
+        refreshRoom()
+        syncGame()
+      }
+    }
+    document.addEventListener('visibilitychange', onReturn)
+    window.addEventListener('focus', onReturn)
+    return () => {
+      document.removeEventListener('visibilitychange', onReturn)
+      window.removeEventListener('focus', onReturn)
+    }
+  }, [refreshRoom, syncGame])
+
+  // The room's own status changes when a game starts or ends; re-read it then.
+  const gameKey = game ? `${game.id}:${game.status}` : 'none'
+  const previousGameKeyRef = useRef(gameKey)
+  useEffect(() => {
+    if (previousGameKeyRef.current !== gameKey) {
+      previousGameKeyRef.current = gameKey
+      refreshRoom()
+    }
+  }, [gameKey, refreshRoom])
+
+  // Lobby only: a modest interval, skipped while the tab is hidden.
+  const lobbyIsVisible = status === 'ready' && gameStatus === 'ready' && showLobby
+  useEffect(() => {
+    if (!lobbyIsVisible) return undefined
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') refreshRoom()
+    }, LOBBY_REFRESH_MS)
+    return () => clearInterval(id)
+  }, [lobbyIsVisible, refreshRoom])
+
+  // ── Start game (host) ────────────────────────────────────────────────────
+  const [startState, setStartState] = useState({ status: 'idle', error: '' })
+  const startingRef = useRef(false)
+
+  const handleStart = useCallback(async () => {
+    if (startingRef.current) return
+    startingRef.current = true
+    setStartState({ status: 'starting', error: '' })
+
+    try {
+      await startGame(roomCode)
+      // Nothing is assumed about the new game. Read the authoritative state;
+      // the game:started notification triggers the same read for everyone.
+      await syncGame()
+      setStartState({ status: 'idle', error: '' })
+    } catch (err) {
+      setStartState({
+        status: 'error',
+        error: getErrorMessage(err, 'Could not start the game. Please try again.'),
+      })
+      // The refusal may mean our view is stale (e.g. host changed).
+      refreshRoom()
+    } finally {
+      startingRef.current = false
+    }
+  }, [roomCode, syncGame, refreshRoom])
 
   // ── Leave ────────────────────────────────────────────────────────────────
+  const leaveTimerRef = useRef(null)
+  useEffect(() => () => clearTimeout(leaveTimerRef.current), [])
+
   const handleLeave = useCallback(async () => {
-    await leaveRoom(code)
-    // The backend will emit room:access_revoked to our socket, which sets
-    // revokedPayload. As a fallback, navigate to dashboard if it hasn't fired
-    // within a short window.
-    setTimeout(() => {
+    await leaveRoom(roomCode)
+    // The backend emits room:access_revoked to our socket, which sets
+    // revokedPayload. As a fallback, show the left-room screen if it hasn't
+    // arrived within a short window.
+    clearTimeout(leaveTimerRef.current)
+    leaveTimerRef.current = setTimeout(() => {
       setRevokedPayload((prev) => prev ?? { code: 'ROOM_LEFT', message: 'You have left this room.' })
     }, 2000)
-  }, [code])
+  }, [roomCode])
 
-  // ── Render guards ─────────────────────────────────────────────────────────
+  // ── Render guards ────────────────────────────────────────────────────────
   if (revokedPayload) {
     return (
       <AccessRevokedBanner
@@ -167,84 +283,60 @@ export default function RoomPage() {
     return <RoomError status={status} error={error} onRetry={retry} />
   }
 
-  // ── Full room layout ──────────────────────────────────────────────────────
+  // ── Main area, chosen from server state ──────────────────────────────────
+  let content = null
+  if (gameStatus === 'loading') {
+    // Don't flash the lobby before we know whether a game is running.
+    content = <MainNotice title="Checking for a game…" />
+  } else if (gameStatus === 'error' && !game) {
+    // A failed read is not "no game". Say so and offer a retry.
+    content = (
+      <MainNotice
+        title="Couldn’t load the game state."
+        message={gameError}
+        onRetry={retryGame}
+      />
+    )
+  } else if (showLobby) {
+    content =
+      room && members ? (
+        <LobbyView
+          room={room}
+          members={members}
+          currentUser={user}
+          onLeave={handleLeave}
+          onStart={handleStart}
+          startState={startState}
+        />
+      ) : null
+  } else {
+    content = (
+      <GamePhaseView
+        game={game}
+        notice={notice}
+        abortReason={abortReason}
+        syncError={gameStatus === 'error' ? gameError : ''}
+        onRetrySync={retryGame}
+        onReturnToLobby={() => setDismissedGameId(game.id)}
+      />
+    )
+  }
+
   return (
-    <div className="flex min-h-dvh flex-col">
-      {/* Room header */}
-      <header className="border-b-2 border-ink">
-        <div className="mx-auto flex max-w-screen-xl items-center justify-between gap-4 px-5 py-3 sm:px-8">
-          <div className="flex items-center gap-4">
-            <Logo />
-            <span className="hidden h-6 w-px bg-ink/20 sm:block" aria-hidden="true" />
-            <div className="flex items-center gap-3">
-              <span className="font-display text-lg font-medium tracking-[0.1em]">
-                {code?.toUpperCase()}
-              </span>
-              <CopyCodeButton code={code?.toUpperCase() ?? ''} />
-            </div>
-          </div>
-
-          {/* Mobile: open chat button */}
-          <button
-            type="button"
-            onClick={() => setChatOpen(true)}
-            aria-label="Open chat"
-            className="inline-flex items-center gap-2 rounded-control border-2 border-ink px-3 py-1.5 text-sm font-semibold hover:bg-ink hover:text-paper lg:hidden"
-          >
-            <MessageSquare className="size-4" aria-hidden="true" />
-            Chat
-          </button>
-        </div>
-      </header>
-
-      {/* Two-column layout: main content + persistent chat */}
-      <div className="relative flex flex-1">
-        {/* Main content area — lobby, drawing, or voting will slot in here */}
-        <main className="flex-1 overflow-y-auto px-5 py-8 sm:px-8 lg:py-10">
-          <div className="mx-auto max-w-2xl">
-            {room && members && (
-              <LobbyView
-                room={room}
-                members={members}
-                currentUser={user}
-                onLeave={handleLeave}
-              />
-            )}
-          </div>
-        </main>
-
-        {/* Persistent chat panel — right column on desktop, overlay on mobile */}
-        <div className="hidden lg:flex lg:w-80 lg:shrink-0 lg:flex-col lg:border-l-2 lg:border-ink">
-          <ChatPanel
-            code={code?.toUpperCase()}
-            socketStatus={socketStatus}
-            currentUser={user}
-            isOpen={true}
-            onClose={() => {}}
-          />
-        </div>
-
-        {/* Mobile chat overlay */}
-        {chatOpen && (
-          <ChatPanel
-            code={code?.toUpperCase()}
-            socketStatus={socketStatus}
-            currentUser={user}
-            isOpen={chatOpen}
-            onClose={() => setChatOpen(false)}
-          />
-        )}
-      </div>
-
-      {/* Socket connection warning (non-blocking) */}
-      {socketStatus === 'error' && (
-        <div
-          role="status"
-          className="border-t-2 border-ink bg-paper px-5 py-2 text-center text-xs font-semibold text-ink-soft"
-        >
-          {socketError || 'Realtime connection lost. Trying to reconnect…'}
-        </div>
-      )}
-    </div>
+    <RoomLayout
+      code={roomCode}
+      socketStatus={socketStatus}
+      socketError={socketError}
+      chat={chat}
+      currentUser={user}
+    >
+      {content}
+    </RoomLayout>
   )
+}
+
+export default function RoomPage() {
+  const { code } = useParams()
+  // Keyed by code: switching rooms discards every hook's state and chat history.
+  return <RoomSession key={code?.toUpperCase()} code={code ?? ''} />
 }

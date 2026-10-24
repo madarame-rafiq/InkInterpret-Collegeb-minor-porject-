@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AuthContext } from './authContext.js'
 import { ApiError, getErrorMessage } from '../lib/api.js'
+import { destroySocket } from '../lib/socket.js'
 import {
   fetchCurrentUser,
   login as loginRequest,
@@ -70,6 +71,9 @@ export default function AuthProvider({ children }) {
 
   const login = useCallback(async (credentials) => {
     const loggedInUser = await loginRequest(credentials)
+    // Any socket that exists now was opened under a previous session. Drop it
+    // so the next getSocket() handshakes with the new session cookie.
+    destroySocket()
     setUser(loggedInUser)
     setSessionError(null)
     return loggedInUser
@@ -79,6 +83,8 @@ export default function AuthProvider({ children }) {
   // If the request fails, the error propagates and the user stays "signed in".
   const logout = useCallback(async () => {
     await logoutRequest()
+    // The server session is gone; the socket authenticated by it must go too.
+    destroySocket()
     setUser(null)
   }, [])
 

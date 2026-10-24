@@ -1,13 +1,15 @@
-// useRoomData: fetches the room and its member list over HTTP and keeps them
-// in sync via a polling-free model — the caller can call refresh() after a
-// socket event indicates state has changed.
+// useRoomData: fetches the room and its member list over HTTP. There is no
+// server event for membership changes, so callers keep it current by calling
+// refresh() (on focus, on reconnect, on a modest lobby interval).
 //
 // Returns:
 //   room       – the room object, or null while loading / on error
 //   members    – array of members, or null while loading / on error
 //   status     – 'loading' | 'ready' | 'error' | 'not_found' | 'forbidden'
 //   error      – human-readable message when status === 'error'
-//   refresh    – function() to re-fetch
+//   refresh    – function() to re-fetch quietly; a transient failure keeps the
+//                last good data on screen
+//   retry      – function() to re-fetch with a visible loading state
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../../lib/api.js'
@@ -19,6 +21,7 @@ export function useRoomData(code) {
   const [status, setStatus] = useState('loading')
   const [error, setError] = useState('')
   const controllerRef = useRef(null)
+  const hasLoadedRef = useRef(false)
 
   const load = useCallback(
     async ({ silent = false } = {}) => {
@@ -41,6 +44,7 @@ export function useRoomData(code) {
 
         if (controller.signal.aborted) return
 
+        hasLoadedRef.current = true
         setRoom(roomData)
         setMembers(membersData)
         setStatus('ready')
@@ -57,6 +61,10 @@ export function useRoomData(code) {
             return
           }
         }
+
+        // A failed background refresh must not replace a working room with an
+        // error page. Keep showing the last good data.
+        if (silent && hasLoadedRef.current) return
 
         setError(err instanceof ApiError ? err.message : 'Could not load room data.')
         setStatus('error')

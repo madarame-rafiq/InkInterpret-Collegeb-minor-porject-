@@ -3,6 +3,7 @@ import { sessionMiddleware } from "../config/session.js";
 import { registerConnectionHandlers } from "./handlers/connection.js";
 import { registerSocketHandlers } from "./handlers/roomSocket.js";
 import { registerChatHandlers } from "./handlers/chatSocket.js";
+import { registerGameHandlers } from "./handlers/gameSocket.js";
 
 export const createSocketServer = (httpServer, allowedOrigins) => {
   const io = new Server(httpServer, {
@@ -23,6 +24,7 @@ export const createSocketServer = (httpServer, allowedOrigins) => {
   registerConnectionHandlers(io);
   registerSocketHandlers(io);
   registerChatHandlers(io);
+  registerGameHandlers(io);
 
   return io;
 };

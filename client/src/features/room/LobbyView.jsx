@@ -1,15 +1,20 @@
-// LobbyView: displays real room data and current members in the waiting state.
+// LobbyView: real room data and members while no game is running.
 //
 // Props:
 //   room          – room object from GET /api/rooms/:code
 //   members       – member array from GET /api/rooms/:code/members
 //   currentUser   – { username, ... } from AuthContext
 //   onLeave       – async function() called when the user clicks "Leave room"
+//   onStart       – function() that starts the game (host only)
+//   startState    – { status: 'idle' | 'starting' | 'error', error: string }
 
 import { useState } from 'react'
 import Button from '../../components/ui/Button.jsx'
 import { formatInputMode, formatSeconds, formatStatus } from '../dashboard/roomRules.js'
-import { Crown, Users } from 'lucide-react'
+import { Crown, Play, Users } from 'lucide-react'
+
+// The backend refuses to start a game with fewer players than this.
+const MIN_PLAYERS = 3
 
 function MemberRow({ member, isCurrentUser }) {
   const isHost = member.role === 'host'
@@ -25,7 +30,7 @@ function MemberRow({ member, isCurrentUser }) {
       </div>
       <span className="flex-1 truncate text-sm font-semibold">
         {member.username}
-        {isCurrentUser && <span className="ml-1 text-ink-faint font-normal">(you)</span>}
+        {isCurrentUser && <span className="ml-1 font-normal text-ink-faint">(you)</span>}
       </span>
       {isHost && (
         <span
@@ -49,7 +54,14 @@ function SettingRow({ label, value }) {
   )
 }
 
-export default function LobbyView({ room, members, currentUser, onLeave }) {
+export default function LobbyView({
+  room,
+  members,
+  currentUser,
+  onLeave,
+  onStart,
+  startState = { status: 'idle', error: '' },
+}) {
   const [isLeaving, setIsLeaving] = useState(false)
   const [leaveError, setLeaveError] = useState('')
 
@@ -66,11 +78,14 @@ export default function LobbyView({ room, members, currentUser, onLeave }) {
   }
 
   const isHost = room.role === 'host'
+  const hostName = members.find((member) => member.role === 'host')?.username
   const waitingForMore = members.length < room.max_players
+  const hasEnoughPlayers = members.length >= MIN_PLAYERS
+  const isStarting = startState.status === 'starting'
 
   return (
     <div className="space-y-8">
-      {/* Status banner */}
+      {/* Status banner and the host's primary action */}
       <div className="border-2 border-l-[6px] border-ink border-l-vermilion bg-sheet px-5 py-4">
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-vermilion-deep">
           {formatStatus(room.status)}
@@ -78,13 +93,42 @@ export default function LobbyView({ room, members, currentUser, onLeave }) {
         <p className="mt-1 font-display text-xl font-medium leading-snug">
           {waitingForMore
             ? `Waiting for players… ${members.length} of ${room.max_players} joined`
-            : `Room full — ${members.length} of ${room.max_players} players ready`}
+            : `Room full — ${members.length} of ${room.max_players} players joined`}
         </p>
-        <p className="mt-2 text-sm text-ink-soft">
-          {isHost
-            ? 'You are the host. The game will start once everyone is ready. (Game start coming in a future update.)'
-            : 'Waiting for the host to start the game.'}
-        </p>
+
+        {isHost ? (
+          <div className="mt-4">
+            {startState.status === 'error' && (
+              <p
+                role="alert"
+                className="mb-3 border-2 border-l-[6px] border-ink border-l-vermilion bg-paper px-4 py-3 text-sm font-semibold"
+              >
+                {startState.error}
+              </p>
+            )}
+            <Button
+              onClick={onStart}
+              disabled={!hasEnoughPlayers || isStarting}
+              aria-busy={isStarting}
+              aria-describedby="start-hint"
+              className="w-full sm:w-auto"
+            >
+              <Play className="size-4" aria-hidden="true" />
+              {isStarting ? 'Starting…' : 'Start game'}
+            </Button>
+            <p id="start-hint" className="mt-2 text-sm text-ink-soft">
+              {hasEnoughPlayers
+                ? `Everyone in the room will play: ${members.length} players, ${members.length} rounds.`
+                : `You need at least ${MIN_PLAYERS} players to start. ${members.length} here so far.`}
+            </p>
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-ink-soft">
+            {hostName
+              ? `Waiting for ${hostName} to start the game.`
+              : 'Waiting for the host to start the game.'}
+          </p>
+        )}
       </div>
 
       {/* Members */}

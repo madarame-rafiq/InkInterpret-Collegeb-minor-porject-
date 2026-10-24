@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "migrate": "node-pg-migrate",
-    "migrate:down": "node-pg-migrate down"
+    "migrate:down": "node-pg-migrate down",
+    "test": "node --test"
   },
   "keywords": [],
   "type": "module",

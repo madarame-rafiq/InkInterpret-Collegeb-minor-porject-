@@ -23,10 +23,14 @@ export function getSocket() {
   return socket
 }
 
-// Disconnects and destroys the singleton. Call this on sign-out so a fresh
-// unauthenticated socket is not accidentally reused.
+// Disconnects and destroys the singleton. Called on login and logout so the
+// next connection is made under the current session, never a previous user's.
 export function destroySocket() {
   if (socket) {
+    // This instance is being discarded, so every listener on it belongs to a
+    // lifecycle that is ending. Removing them stops stale callbacks from
+    // firing after the disconnect below.
+    socket.removeAllListeners()
     socket.disconnect()
     socket = null
   }
