@@ -23,6 +23,8 @@ export const getGameStateController = async (req, res, next) => {
 export const getDrawingController = async (req, res, next) => {
   try {
     const drawing = await getDrawingAsset({ roomCode: normalizedCode(req.params.code), userId: req.session.userId, publicId: req.params.publicId });
-    res.type(drawing.mimeType).send(drawing.body);
+    // Drawings can contain user-created material; do not let shared caches
+    // retain an authenticated response after the game has moved on.
+    res.set("Cache-Control", "private, no-store").type(drawing.mimeType).send(drawing.body);
   } catch (error) { next(error); }
 };

@@ -1,4 +1,5 @@
 import { leaveRoom } from "../services/leaveRoomService.js";
+import { removeDrawingFiles } from "../services/gameService.js";
 import { revokeUserFromRoom } from "../socket/index.js";
 
 export async function leaveRoomController(req, res, next) {
@@ -34,9 +35,15 @@ export async function leaveRoomController(req, res, next) {
       }
     }
 
+    // Files are deliberately removed only after the transaction deleted the
+    // room and cascaded its game rows. A cleanup failure cannot resurrect DB
+    // state or turn a completed leave into an HTTP error.
+    if (result.deleted) await removeDrawingFiles(result.drawingStorageKeys);
+    const { drawingStorageKeys, ...response } = result;
+
     return res.status(200).json({
       status: "success",
-      data: result,
+      data: response,
     });
   } catch (error) {
     next(error);

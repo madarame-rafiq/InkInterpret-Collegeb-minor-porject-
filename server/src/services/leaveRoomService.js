@@ -62,10 +62,23 @@ export async function leaveRoom({ userId, code }) {
     );
 
     if (remainingResult.rowCount === 0) {
+      const drawingFiles = await client.query(
+        `SELECT gd.storage_key
+         FROM game_drawings gd
+         JOIN game_rounds gr ON gr.id = gd.round_id
+         JOIN games g ON g.id = gr.game_id
+         WHERE g.room_id = $1 AND gd.storage_key IS NOT NULL`,
+        [room.id],
+      );
       await client.query("DELETE FROM rooms WHERE id = $1", [room.id]);
       await client.query("COMMIT");
 
-      return { deleted: true, code, roomId: room.id };
+      return {
+        deleted: true,
+        code,
+        roomId: room.id,
+        drawingStorageKeys: drawingFiles.rows.map((row) => row.storage_key),
+      };
     }
 
     if (wasHost) {

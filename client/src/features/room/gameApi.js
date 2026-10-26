@@ -1,4 +1,7 @@
 import { ApiError, apiFetch } from '../../lib/api.js'
+import { getSocket } from '../../lib/socket.js'
+
+const ACK_TIMEOUT_MS = 15_000
 
 function unexpectedResponse() {
   return new ApiError({
@@ -36,4 +39,76 @@ export async function fetchGameState(code, signal) {
 // caller reconciles by re-reading the authoritative snapshot.
 export async function startGame(code) {
   await apiFetch(`/api/rooms/${encodeURIComponent(code)}/game/start`, { method: 'POST' })
+}
+
+// ── Socket commands ─────────────────────────────────────────────────────────
+// The server acknowledges every command as { status: 'success', data } or
+// { status: 'error', error: { code, message } }. Both are mapped onto the
+// same ApiError the HTTP helper throws, so callers handle one error type.
+// A timeout is its own code (ACK_TIMEOUT): it is NOT proof the server
+// rejected the command, and callers word it that way.
+
+function emitWithAck(event, payload) {
+  return new Promise((resolve, reject) => {
+    const socket = getSocket()
+
+    // Socket.IO would buffer an emit made while disconnected and send it on
+    // reconnect, after we've already told the person it failed. Don't emit.
+    if (!socket.connected) {
+      reject(
+        new ApiError({
+          status: 0,
+          code: 'SOCKET_DISCONNECTED',
+          message: 'You’re disconnected right now. Wait for the connection to return, then try again.',
+        }),
+      )
+      return
+    }
+
+    socket.timeout(ACK_TIMEOUT_MS).emit(event, payload, (timeoutError, response) => {
+      if (timeoutError) {
+        reject(
+          new ApiError({
+            status: 0,
+            code: 'ACK_TIMEOUT',
+            message: 'The server didn’t respond in time. Check your connection and try again.',
+          }),
+        )
+        return
+      }
+
+      if (response?.status === 'success') {
+        resolve(response.data ?? {})
+        return
+      }
+
+      reject(
+        new ApiError({
+          status: 0,
+          code: response?.error?.code ?? null,
+          message: response?.error?.message ?? 'The server rejected the request.',
+        }),
+      )
+    })
+  })
+}
+
+// game:prompt:submit { code, prompt }  ->  { phase, phaseEndsAt }
+export function submitPrompt(code, prompt) {
+  return emitWithAck('game:prompt:submit', { code, prompt })
+}
+
+// game:drawing:submit { code, canvasData }  ->  { drawingId }
+export function submitCanvasDrawing(code, canvasData) {
+  return emitWithAck('game:drawing:submit', { code, canvasData })
+}
+
+// game:capture:submit { code, dataUrl }  ->  { drawingId }   (photo rooms, capture phase)
+export function submitCapture(code, dataUrl) {
+  return emitWithAck('game:capture:submit', { code, dataUrl })
+}
+
+// game:vote:submit { code, drawingId }  ->  {}   (drawingId is the entry's publicId)
+export function submitVote(code, drawingId) {
+  return emitWithAck('game:vote:submit', { code, drawingId })
 }

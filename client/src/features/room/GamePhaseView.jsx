@@ -1,12 +1,14 @@
 // GamePhaseView: renders the room's main area for an existing game, from the
-// server's phase. Stage 1 shows real state only. Phases whose interactive UI
-// arrives in later stages say so honestly and offer no controls that imply
-// they work. No scores are shown; positive vote scoring isn't implemented on
-// the backend yet, so any total would be misleading.
+// server's phase. Every phase is server-driven; this view never advances one.
 
 import { Users } from 'lucide-react'
 import Button from '../../components/ui/Button.jsx'
 import PhaseTimer from './PhaseTimer.jsx'
+import PromptView from './PromptView.jsx'
+import DrawingView from './DrawingView.jsx'
+import CaptureView from './CaptureView.jsx'
+import VotingView from './VotingView.jsx'
+import ResultsView from './ResultsView.jsx'
 
 const PHASE_LABELS = {
   prompt: 'Prompt',
@@ -18,12 +20,18 @@ const PHASE_LABELS = {
   aborted: 'Game ended',
 }
 
-const SKIP_REASONS = {
-  FEWER_THAN_TWO_DRAWINGS: 'fewer than two drawings were submitted',
-}
-
 const ABORT_MESSAGES = {
   INSUFFICIENT_CONNECTED_PLAYERS: 'Too few players stayed connected, so the server ended the game.',
+}
+
+// The missed-prompt notice arrives as a socket event with no room identifier,
+// and the socket stays in a room's channel after you navigate away. So a notice
+// is shown only if it fits THIS game: same round, and it names this round's
+// prompt giver. Otherwise it's ignored.
+function noticeApplies(notice, game) {
+  if (!notice || notice.round !== game.round.number) return false
+  const giver = game.participants.find((p) => p.position === game.round.number)
+  return Boolean(giver) && typeof notice.message === 'string' && notice.message.startsWith(`${giver.username} `)
 }
 
 function Panel({ title, children }) {
@@ -35,8 +43,8 @@ function Panel({ title, children }) {
   )
 }
 
-function PromptCard({ round, notice }) {
-  const showNotice = notice && notice.round === round.number
+function PromptCard({ game, notice }) {
+  const { round } = game
 
   if (round.promptStatus === 'submitted' && round.prompt) {
     return (
@@ -58,7 +66,9 @@ function PromptCard({ round, notice }) {
         <p className="mt-1 text-sm leading-relaxed text-ink-soft">
           {/* The server's own wording when we received it live. After a refresh
               only the status survives, so state just that fact. */}
-          {showNotice ? notice.message : 'No prompt was submitted for this round.'}
+          {noticeApplies(notice, game)
+            ? notice.message
+            : 'No prompt was submitted for this round. Everyone still draws.'}
         </p>
       </div>
     )
@@ -67,100 +77,115 @@ function PromptCard({ round, notice }) {
   return null
 }
 
-function PhaseBody({ game, notice, abortReason, onReturnToLobby }) {
-  const { phase, round, participants, drawings } = game
+const paperSteps = [
+  'Grab a sheet of paper and a dark pen or marker.',
+  'Draw your interpretation of the prompt.',
+  'When the capture step opens, photograph it or upload a photo.',
+]
+
+function PaperInstructions() {
+  return (
+    <div className="border-2 border-l-[6px] border-ink border-l-vermilion bg-sheet px-5 py-4">
+      <p className="font-display text-xl font-medium leading-snug">Draw on paper now.</p>
+      <ol className="mt-3 space-y-2 text-sm leading-relaxed text-ink-soft">
+        {paperSteps.map((step, index) => (
+          <li key={step} className="flex gap-3">
+            <span className="font-display text-base font-medium text-vermilion-deep" aria-hidden="true">
+              {index + 1}
+            </span>
+            {step}
+          </li>
+        ))}
+      </ol>
+      <p className="mt-3 text-sm text-ink-soft">
+        Everyone draws every round, including the prompt giver. Keep your drawing close: you’ll
+        submit it in the capture step, not before.
+      </p>
+    </div>
+  )
+}
+
+function PhaseBody({ game, notice, abortReason, inputMode, roomCode, onRefreshGame, onReturnToLobby }) {
+  const { phase, round, participants } = game
   const promptGiver = participants.find((p) => p.position === round.number) ?? null
-  const totalRounds = participants.length
+  const roundKey = `${game.id}:${round.number}`
+  // The server states the mode; the room setting is only a fallback.
+  const mode = game.inputMode ?? inputMode
 
   switch (phase) {
     case 'prompt':
-      return promptGiver?.isYou ? (
-        <Panel title="You’re the prompt giver this round.">
-          <p>
-            Prompt entry isn’t built into this version yet, so no prompt can be sent from here.
-            The round will move on to drawing when the timer ends.
-          </p>
-          <p>Everyone draws every round, including the prompt giver.</p>
-        </Panel>
-      ) : (
-        <Panel title={`Waiting for ${promptGiver?.username ?? 'the prompt giver'} to write the prompt.`}>
-          <p>Everyone draws every round, including the prompt giver.</p>
-        </Panel>
+      return (
+        <PromptView
+          key={roundKey}
+          roomCode={roomCode}
+          isPromptGiver={Boolean(promptGiver?.isYou)}
+          promptGiverName={promptGiver?.username}
+          onRefreshGame={onRefreshGame}
+        />
       )
 
     case 'drawing':
       return (
         <>
-          <PromptCard round={round} notice={notice} />
-          <Panel title="The drawing window is open.">
-            <p>
-              Drawing tools aren’t built into this version yet, so nothing can be submitted from
-              here. The round moves on when the server’s timer ends.
-            </p>
-          </Panel>
+          <PromptCard game={game} notice={notice} />
+          {mode === 'photo' ? (
+            <PaperInstructions />
+          ) : (
+            // Keyed by round so each round starts with a fresh canvas.
+            <DrawingView
+              key={roundKey}
+              roomCode={roomCode}
+              game={game}
+              onRefreshGame={onRefreshGame}
+            />
+          )}
         </>
       )
 
     case 'capture':
       return (
         <>
-          <PromptCard round={round} notice={notice} />
-          <Panel title="The photo capture window is open.">
-            <p>
-              Photo capture isn’t built into this version yet. The round moves on when the
-              server’s timer ends.
-            </p>
-          </Panel>
+          <PromptCard game={game} notice={notice} />
+          {mode === 'canvas' ? (
+            <Panel title="There’s no capture step in a canvas room.">
+              <p>The round moves on when the server’s timer ends.</p>
+            </Panel>
+          ) : (
+            <CaptureView
+              key={roundKey}
+              roomCode={roomCode}
+              game={game}
+              onRefreshGame={onRefreshGame}
+            />
+          )}
         </>
       )
 
     case 'voting':
       return (
         <>
-          <PromptCard round={round} notice={notice} />
-          <Panel title="Voting is open.">
-            <p>
-              {drawings.length} anonymous {drawings.length === 1 ? 'drawing is' : 'drawings are'} in
-              this round. The voting gallery isn’t built into this version yet, so no vote can be
-              cast from here.
-            </p>
-            <p>Artists stay hidden until the round result.</p>
-          </Panel>
+          <PromptCard game={game} notice={notice} />
+          <VotingView
+            key={roundKey}
+            roomCode={roomCode}
+            game={game}
+            onRefreshGame={onRefreshGame}
+          />
         </>
       )
 
     case 'result':
-      return round.votingSkipped ? (
-        <Panel title="Voting was skipped this round.">
-          <p>
-            {SKIP_REASONS[round.votingSkipReason]
-              ? `The server skipped it because ${SKIP_REASONS[round.votingSkipReason]}.`
-              : 'The server skipped voting for this round.'}
-          </p>
-          <p>
-            {round.number >= totalRounds
-              ? 'That was the last round.'
-              : 'The next round starts when the timer ends.'}
-          </p>
-        </Panel>
-      ) : (
-        <Panel title={`Round ${round.number} is complete.`}>
-          <p>
-            The results screen isn’t built into this version yet. Scores aren’t shown because the
-            server doesn’t award points for votes yet.
-          </p>
-        </Panel>
+      return (
+        <>
+          <PromptCard game={game} notice={notice} />
+          <ResultsView key={roundKey} game={game} />
+        </>
       )
 
     case 'finished':
       return (
         <>
-          <Panel title="The game is over.">
-            <p>
-              The final results screen isn’t built into this version yet, and scores aren’t shown
-              because they wouldn’t be correct.
-            </p>
-          </Panel>
+          <ResultsView key={roundKey} game={game} isFinal />
           <Button onClick={onReturnToLobby}>Return to lobby</Button>
         </>
       )
@@ -223,8 +248,11 @@ export default function GamePhaseView({
   game,
   notice,
   abortReason,
+  inputMode,
+  roomCode,
   syncError,
   onRetrySync,
+  onRefreshGame,
   onReturnToLobby,
 }) {
   const { phase, status, round, participants, phaseEndsAt } = game
@@ -242,8 +270,7 @@ export default function GamePhaseView({
   const timerLabel = isActive ? timerLabels[phase] : null
 
   // The server's own message about a missed prompt stays visible all round.
-  const showMissedBanner =
-    isActive && notice && notice.round === round.number && phase !== 'prompt'
+  const showMissedBanner = isActive && phase !== 'prompt' && noticeApplies(notice, game)
 
   return (
     <div className="space-y-6">
@@ -286,6 +313,9 @@ export default function GamePhaseView({
         game={game}
         notice={notice}
         abortReason={abortReason}
+        inputMode={inputMode}
+        roomCode={roomCode}
+        onRefreshGame={onRefreshGame}
         onReturnToLobby={onReturnToLobby}
       />
 

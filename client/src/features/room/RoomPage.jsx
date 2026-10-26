@@ -315,12 +315,24 @@ function RoomSession({ code }) {
         game={game}
         notice={notice}
         abortReason={abortReason}
+        inputMode={room?.input_mode}
+        roomCode={roomCode}
         syncError={gameStatus === 'error' ? gameError : ''}
         onRetrySync={retryGame}
+        onRefreshGame={syncGame}
         onReturnToLobby={() => setDismissedGameId(game.id)}
       />
     )
   }
+
+  // The canvas wants more room than the text-based phases.
+    // The canvas and the artwork galleries want more room than the text phases.
+  const roundMode = game?.inputMode ?? room?.input_mode
+  const wideMain =
+    !showLobby &&
+    Boolean(game) &&
+    ((game.phase === 'drawing' && roundMode !== 'photo') ||
+      ['voting', 'result', 'finished'].includes(game.phase))
 
   return (
     <RoomLayout
@@ -329,6 +341,7 @@ function RoomSession({ code }) {
       socketError={socketError}
       chat={chat}
       currentUser={user}
+      wide={wideMain}
     >
       {content}
     </RoomLayout>

@@ -1,7 +1,8 @@
 import { randomInt, randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import sharp from "sharp";
 import { pool } from "../database/pool.js";
 import { AppError } from "../utils/AppError.js";
 
@@ -9,11 +10,13 @@ const PROMPT_MS = 45_000;
 const RESULT_MS = 12_000;
 const DISCONNECT_ABORT_MS = 60_000;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGE_PIXELS = 40_000_000;
 const MAX_CANVAS_CHARS = 8 * 1024 * 1024;
 const storageDirectory = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../../storage/game-drawings"
 );
+const STORAGE_KEY_PATTERN = /^[0-9a-f-]{36}\.(?:jpg|jpeg|png|webp)$/i;
 
 const addMilliseconds = (date, milliseconds) =>
   new Date(date.getTime() + milliseconds);
@@ -265,18 +268,66 @@ export const submitCanvasDrawing = async ({ roomCode, userId, canvasData }) => {
   } catch (error) { await rollback(client); throw error; } finally { client.release(); }
 };
 
-const decodeImage = (dataUrl) => {
-  const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl ?? "");
-  if (!match) throw appError(400, "Only PNG, JPEG, or WebP images are accepted", "INVALID_IMAGE");
-  const data = Buffer.from(match[2], "base64");
-  if (!data.length || data.length > MAX_IMAGE_BYTES) throw appError(400, "Image must be at most 8 MB", "IMAGE_TOO_LARGE");
-  return { mimeType: match[1], data };
+const DATA_URL_PATTERN = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/;
+const FORMAT_BY_MIME = { "image/png": "png", "image/jpeg": "jpeg", "image/webp": "webp" };
+
+const invalidImage = () => appError(400, "Only valid PNG, JPEG, or WebP images are accepted", "INVALID_IMAGE");
+
+// This runs before any game/database work so malformed input never reaches disk.
+// Sharp decodes the bytes rather than trusting the data URL's declared media type.
+export const sanitizePhotoDataUrl = async (dataUrl) => {
+  const match = DATA_URL_PATTERN.exec(dataUrl ?? "");
+  if (!match) throw invalidImage();
+
+  // A base64 quartet represents at most three decoded bytes. Check the encoded
+  // size first to avoid allocating an arbitrarily large Buffer.
+  const encoded = match[2];
+  const padding = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
+  // Avoid a repeated-group regexp here: V8 can overflow its stack when an
+  // attacker submits a very large otherwise-valid Base64 string.
+  if (encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]+$/.test(encoded.slice(0, encoded.length - padding))) {
+    throw invalidImage();
+  }
+  const decodedLength = (encoded.length / 4) * 3 - padding;
+  if (!decodedLength || decodedLength > MAX_IMAGE_BYTES) {
+    throw appError(400, "Image must contain at most 8 MiB of decoded data", "IMAGE_TOO_LARGE");
+  }
+
+  const data = Buffer.from(encoded, "base64");
+  if (data.length !== decodedLength) throw invalidImage();
+
+  let metadata;
+  try {
+    metadata = await sharp(data, { limitInputPixels: MAX_IMAGE_PIXELS, failOn: "error", animated: false }).metadata();
+  } catch {
+    throw invalidImage();
+  }
+  if (!metadata.width || !metadata.height || metadata.width * metadata.height > MAX_IMAGE_PIXELS) {
+    throw appError(400, "Image dimensions are too large", "IMAGE_DIMENSIONS_TOO_LARGE");
+  }
+  if (!metadata.format || FORMAT_BY_MIME[match[1]] !== metadata.format) throw invalidImage();
+
+  try {
+    // rotate() applies EXIF orientation; re-encoding without withMetadata()
+    // removes EXIF/XMP/IPTC/GPS and all other source metadata. JPEG gives the
+    // storage layer one opaque, server-selected format and filename shape.
+    const output = await sharp(data, { limitInputPixels: MAX_IMAGE_PIXELS, failOn: "error", animated: false })
+      .rotate()
+      .flatten({ background: "#ffffff" })
+      .jpeg({ quality: 90, mozjpeg: true })
+      .toBuffer();
+    return { data: output, mimeType: "image/jpeg", extension: "jpg" };
+  } catch {
+    throw invalidImage();
+  }
 };
 
 export const submitPhotoDrawing = async ({ roomCode, userId, dataUrl }) => {
-  const { mimeType, data } = decodeImage(dataUrl);
+  const { mimeType, data, extension } = await sanitizePhotoDataUrl(dataUrl);
   const client = await pool.connect();
   let filePath;
+  let fileWritten = false;
+  let committed = false;
   try {
     await client.query("BEGIN");
     const game = await lockedActiveGame(client, roomCode);
@@ -284,19 +335,27 @@ export const submitPhotoDrawing = async ({ roomCode, userId, dataUrl }) => {
     const round = await assertSubmissionPhase(client, game, userId, "capture");
     const existing = await client.query(`SELECT 1 FROM game_drawings WHERE round_id = $1 AND artist_user_id = $2`, [round.id, userId]);
     if (existing.rowCount) throw appError(409, "You already submitted a drawing", "DRAWING_ALREADY_SUBMITTED");
-    const extension = mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : "jpg";
     const storageKey = `${randomUUID()}.${extension}`;
     await mkdir(storageDirectory, { recursive: true });
     filePath = resolve(storageDirectory, storageKey);
     await writeFile(filePath, data, { flag: "wx" });
+    fileWritten = true;
     const result = await client.query(
       `INSERT INTO game_drawings (round_id, artist_user_id, submission_type, storage_key, mime_type, byte_size)
        VALUES ($1, $2, 'photo', $3, $4, $5) RETURNING public_id`,
       [round.id, userId, storageKey, mimeType, data.length]
     );
     await client.query(`UPDATE game_round_participants SET drawing_status = 'submitted' WHERE round_id = $1 AND user_id = $2`, [round.id, userId]);
-    await client.query("COMMIT"); return result.rows[0].public_id;
-  } catch (error) { await rollback(client); throw error; } finally { client.release(); }
+    await client.query("COMMIT");
+    committed = true;
+    return result.rows[0].public_id;
+  } catch (error) {
+    await rollback(client);
+    // A database failure after the write must not leak a private upload. The
+    // filename is generated above, so this cannot delete an unrelated file.
+    if (fileWritten && !committed) await unlink(filePath).catch(() => {});
+    throw error;
+  } finally { client.release(); }
 };
 
 export const submitVote = async ({ roomCode, userId, publicDrawingId }) => {
@@ -332,6 +391,7 @@ export const getGameState = async ({ roomCode, userId }) => {
     `SELECT gp.roster_position AS "position", gp.score, gp.user_id = $2 AS "isYou", u.username
      FROM game_participants gp JOIN users u ON u.id = gp.user_id WHERE gp.game_id = $1 ORDER BY gp.roster_position`, [game.id, userId]
   );
+  const drawingsVisible = game.current_phase === "voting" || game.current_phase === "result" || game.status !== "active";
   const drawings = await pool.query(
     `SELECT gd.public_id AS "publicId", gd.submission_type AS "type"
        ${game.current_phase === "result" || game.status !== "active" ? ", u.username AS artist, COUNT(gv.id)::int AS votes" : ""}
@@ -340,18 +400,21 @@ export const getGameState = async ({ roomCode, userId }) => {
      ${game.current_phase === "result" || game.status !== "active" ? "JOIN users u ON u.id = gd.artist_user_id LEFT JOIN game_votes gv ON gv.drawing_id = gd.id" : ""}
      WHERE gd.round_id = $1
      ${game.current_phase === "result" || game.status !== "active" ? "GROUP BY gd.id, u.username" : ""}
-     ORDER BY gd.public_id`, [round.id]
+    ORDER BY gd.public_id`, [round.id]
   );
   return {
-    id: game.id, status: game.status, phase: game.current_phase, phaseEndsAt: game.phase_ends_at,
+    id: game.id, status: game.status, inputMode: game.input_mode, phase: game.current_phase, phaseEndsAt: game.phase_ends_at,
     round: { number: round.round_number, promptStatus: round.prompt_status, prompt: round.prompt_text, votingSkipped: round.voting_skipped, votingSkipReason: round.voting_skip_reason },
-    participants: participants.rows, drawings: drawings.rows.map((drawing) => ({ ...drawing, assetUrl: `/api/rooms/${roomCode}/game/drawings/${drawing.publicId}` })),
+    participants: participants.rows,
+    drawings: drawingsVisible
+      ? drawings.rows.map((drawing) => ({ ...drawing, assetUrl: `/api/rooms/${roomCode}/game/drawings/${drawing.publicId}` }))
+      : [],
   };
 };
 
 export const getDrawingAsset = async ({ roomCode, userId, publicId }) => {
   const result = await pool.query(
-    `SELECT gd.submission_type, gd.canvas_data, gd.storage_key, gd.mime_type
+    `SELECT gd.submission_type, gd.canvas_data, gd.storage_key, gd.mime_type, g.status, g.current_phase
      FROM game_drawings gd
      JOIN game_rounds gr ON gr.id = gd.round_id
      JOIN games g ON g.id = gr.game_id
@@ -364,12 +427,27 @@ export const getDrawingAsset = async ({ roomCode, userId, publicId }) => {
   );
   if (!result.rowCount) throw appError(404, "Drawing not found", "DRAWING_NOT_FOUND");
   const drawing = result.rows[0];
+  if (drawing.status === "active" && drawing.current_phase !== "voting" && drawing.current_phase !== "result") {
+    throw appError(404, "Drawing not found", "DRAWING_NOT_FOUND");
+  }
   if (drawing.submission_type === "canvas") return { mimeType: "application/json", body: JSON.stringify({ canvasData: drawing.canvas_data }) };
-  if (!drawing.storage_key || resolve(storageDirectory, drawing.storage_key) !== resolve(storageDirectory, drawing.storage_key.split("/").pop())) {
+  if (!drawing.storage_key || !/^[0-9a-f-]{36}\.jpg$/i.test(drawing.storage_key)) {
     throw appError(404, "Drawing file not found", "DRAWING_NOT_FOUND");
   }
   try { return { mimeType: drawing.mime_type, body: await readFile(resolve(storageDirectory, drawing.storage_key)) }; }
   catch { throw appError(404, "Drawing file not found", "DRAWING_NOT_FOUND"); }
+};
+
+// Called only after the database row/room deletion has committed. The strict
+// generated-key allowlist keeps a stale or compromised DB value from escaping
+// the drawing directory or affecting unrelated files.
+export const removeDrawingFiles = async (storageKeys) => {
+  await Promise.all((storageKeys ?? []).map(async (storageKey) => {
+    if (!STORAGE_KEY_PATTERN.test(storageKey)) return;
+    await unlink(resolve(storageDirectory, storageKey)).catch((error) => {
+      if (error.code !== "ENOENT") console.error("Unable to remove game drawing file", error);
+    });
+  }));
 };
 
 export const processDueGames = async () => {

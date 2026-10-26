@@ -4,16 +4,7 @@
 // screen until the server announces the next one. The local clock may drift
 // from the server's, so this is a guide, and the server still decides.
 
-import { useSyncExternalStore } from 'react'
-
-// Whole seconds of the local clock. React compares snapshots by value, so the
-// component re-renders only when the second actually changes.
-const getNowSeconds = () => Math.floor(Date.now() / 1000)
-
-function subscribe(onTick) {
-  const id = setInterval(onTick, 250)
-  return () => clearInterval(id)
-}
+import { useSecondsRemaining } from './useCountdown.js'
 
 function formatRemaining(totalSeconds) {
   const minutes = Math.floor(totalSeconds / 60)
@@ -22,12 +13,9 @@ function formatRemaining(totalSeconds) {
 }
 
 export default function PhaseTimer({ endsAt, label }) {
-  const nowSeconds = useSyncExternalStore(subscribe, getNowSeconds)
+  const remaining = useSecondsRemaining(endsAt)
+  if (remaining === null) return null // missing or malformed deadline
 
-  const endsMs = Date.parse(endsAt)
-  if (!Number.isFinite(endsMs)) return null // missing or malformed deadline
-
-  const remaining = Math.max(0, Math.ceil(endsMs / 1000) - nowSeconds)
   const isExpired = remaining === 0
   const isUrgent = !isExpired && remaining <= 10
 
